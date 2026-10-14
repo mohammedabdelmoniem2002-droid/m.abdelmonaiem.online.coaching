@@ -1,0 +1,14 @@
+{
+  "name": "elite-coach",
+  "version": "2.1.0",
+  "description": "Elite Coach profile + client portal + store — Railway ready (zero deps)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}
