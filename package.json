@@ -1,0 +1,13 @@
+{
+  "name": "elite-coach",
+  "version": "2.1.1",
+  "description": "Elite Coach — Railway ready",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "echo 'No build step — static SPA'"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
