@@ -1,11 +1,11 @@
 /**
  * Elite Coach — Railway-ready server (zero dependencies)
- * Pure Node.js http — injects env vars + seeds client users.
+ * Finds index.html in multiple possible locations.
  */
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
-const url = require("url");
+const { URL } = require("url");
 
 const PORT = process.env.PORT || 3000;
 
@@ -31,7 +31,6 @@ function parseClientUsers() {
       { name: "عميل تجريبي 2", phone: "01000000002", pass: "2222", months: "1", expiry: addMonths(1) },
     ];
   }
-
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -47,7 +46,6 @@ function parseClientUsers() {
         }));
     }
   } catch (_) {}
-
   return String(raw)
     .split(",")
     .map((p) => p.trim())
@@ -71,11 +69,56 @@ function parseClientUsers() {
 }
 
 const CLIENT_USERS = parseClientUsers();
-const PUBLIC = path.join(__dirname, "public");
-const INDEX = path.join(PUBLIC, "index.html");
+
+// Search multiple locations for index.html (Railway root-dir quirks)
+const CANDIDATES = [
+  path.join(__dirname, "public", "index.html"),
+  path.join(__dirname, "index.html"),
+  path.join(process.cwd(), "public", "index.html"),
+  path.join(process.cwd(), "index.html"),
+  path.join(__dirname, "..", "public", "index.html"),
+  path.join(__dirname, "..", "index.html"),
+];
+
+function findIndexHtml() {
+  for (const p of CANDIDATES) {
+    try {
+      if (fs.existsSync(p) && fs.statSync(p).isFile()) return p;
+    } catch (_) {}
+  }
+  return null;
+}
+
+const INDEX_PATH = findIndexHtml();
+const STATIC_ROOT = INDEX_PATH ? path.dirname(INDEX_PATH) : path.join(__dirname, "public");
+
+console.log("CWD:", process.cwd());
+console.log("__dirname:", __dirname);
+console.log("Looking for index.html in:");
+CANDIDATES.forEach((p) => {
+  const ok = fs.existsSync(p);
+  console.log("  " + (ok ? "FOUND" : "miss ") + " " + p);
+});
+console.log("Using INDEX:", INDEX_PATH || "NOT FOUND");
+console.log("STATIC_ROOT:", STATIC_ROOT);
 
 function buildHtml() {
-  let html = fs.readFileSync(INDEX, "utf8");
+  if (!INDEX_PATH) {
+    const listing = [];
+    try {
+      listing.push("cwd files: " + fs.readdirSync(process.cwd()).join(", "));
+    } catch (_) {}
+    try {
+      listing.push("__dirname files: " + fs.readdirSync(__dirname).join(", "));
+    } catch (_) {}
+    throw new Error(
+      "index.html not found. Checked: " +
+        CANDIDATES.join(" | ") +
+        " || " +
+        listing.join(" || ")
+    );
+  }
+  let html = fs.readFileSync(INDEX_PATH, "utf8");
 
   const configPayload = Object.assign({}, ENV, { CLIENT_USERS: CLIENT_USERS });
 
@@ -196,22 +239,32 @@ const MIME = {
 };
 
 const server = http.createServer(function (req, res) {
-  const parsed = url.parse(req.url || "/");
-  let pathname = decodeURIComponent(parsed.pathname || "/");
+  let pathname = "/";
+  try {
+    pathname = new URL(req.url || "/", "http://localhost").pathname;
+  } catch (_) {}
+  pathname = decodeURIComponent(pathname);
 
   if (pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({
-      ok: true,
-      service: "elite-coach",
-      coach: ENV.COACH_USERNAME,
-      sessionMinutes: ENV.SESSION_MINUTES,
-      whatsapp: ENV.WHATSAPP_NUMBER,
-      seededClients: CLIENT_USERS.length,
-    }));
+    res.end(
+      JSON.stringify({
+        ok: true,
+        service: "elite-coach",
+        coach: ENV.COACH_USERNAME,
+        sessionMinutes: ENV.SESSION_MINUTES,
+        whatsapp: ENV.WHATSAPP_NUMBER,
+        seededClients: CLIENT_USERS.length,
+        indexFound: !!INDEX_PATH,
+        indexPath: INDEX_PATH,
+        cwd: process.cwd(),
+        dirname: __dirname,
+      })
+    );
     return;
   }
 
+  // SPA routes
   if (
     pathname === "/" ||
     pathname === "/index.html" ||
@@ -227,14 +280,15 @@ const server = http.createServer(function (req, res) {
       });
       res.end(html);
     } catch (e) {
-      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Error building page: " + e.message);
     }
     return;
   }
 
-  const filePath = path.join(PUBLIC, pathname.replace(/^\/+/, ""));
-  if (!filePath.startsWith(PUBLIC)) {
+  // Static from same folder as index
+  const filePath = path.join(STATIC_ROOT, pathname.replace(/^\/+/, ""));
+  if (!filePath.startsWith(STATIC_ROOT)) {
     res.writeHead(403);
     res.end("Forbidden");
     return;
@@ -266,7 +320,14 @@ const server = http.createServer(function (req, res) {
 
 server.listen(PORT, "0.0.0.0", function () {
   console.log("Elite Coach running on port " + PORT);
-  console.log("Coach: " + ENV.COACH_USERNAME + " | Session: " + ENV.SESSION_MINUTES + "min | WA: " + ENV.WHATSAPP_NUMBER);
+  console.log(
+    "Coach: " +
+      ENV.COACH_USERNAME +
+      " | Session: " +
+      ENV.SESSION_MINUTES +
+      "min | WA: " +
+      ENV.WHATSAPP_NUMBER
+  );
   console.log("Seeded client users: " + CLIENT_USERS.length);
   CLIENT_USERS.forEach(function (c, i) {
     console.log("  " + (i + 1) + ". " + c.name + " | " + c.phone + " | pass=" + c.pass);
